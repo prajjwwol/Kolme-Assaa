@@ -19,8 +19,14 @@ def serve_index():
     print(f"Serving index.html from: {file_path}")
     return FileResponse(file_path)
 
+# Access the Hugging Face API token from Codespaces secrets (using the secret name 'HUGGING')
+huggingface_api_token = os.getenv("HUGGING")
+
+# Ensure the token is available
+if not huggingface_api_token:
+    raise EnvironmentError("HUGGING environment variable is not set")
+
 # Set up Hugging Face Inference Client (replacing deprecated InferenceApi)
-huggingface_api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 hf_client = InferenceClient(model="gpt2", token=huggingface_api_token)
 
 # Define the data model for the incoming requirement prioritization request
