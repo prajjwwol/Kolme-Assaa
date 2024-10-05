@@ -1,33 +1,39 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from huggingface_hub import InferenceClient  # Use InferenceClient instead of InferenceApi
 from pydantic import BaseModel
 import os
+import requests
+from PIL import Image
+from transformers import MllamaForConditionalGeneration, AutoProcessor
+import torch
 
 # Initialize FastAPI app
 app = FastAPI()
 
-# Serve static files from the 'static' directory with an absolute path
+# Serve static files from the 'static' directory using an absolute path
 app.mount("/static", StaticFiles(directory=os.path.abspath("static")), name="static")
 
-# Serve the index.html file at the root URL
+# Serve the index.html at the root URL "/"
 @app.get("/")
 def serve_index():
-    # Get the absolute path of index.html
     file_path = os.path.join(os.path.abspath("static"), "index.html")
     print(f"Serving index.html from: {file_path}")
     return FileResponse(file_path)
 
 # Access the Hugging Face API token from Codespaces secrets (using the secret name 'HUGGING')
 huggingface_api_token = os.getenv("HUGGING")
-
-# Ensure the token is available
 if not huggingface_api_token:
-    raise EnvironmentError("HUGGING environment variable is not set")
+    raise EnvironmentError("HUGGING environment variable is not set or invalid")
 
-# Set up Hugging Face Inference Client (replacing deprecated InferenceApi)
-hf_client = InferenceClient(model="gpt2", token=huggingface_api_token)
+# Set up the LLaMA 3.2 Vision-Instruct model and processor
+model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+model = MllamaForConditionalGeneration.from_pretrained(
+    model_id,
+    torch_dtype=torch.bfloat16,
+    device_map="auto",
+)
+processor = AutoProcessor.from_pretrained(model_id)
 
 # Define the data model for the incoming requirement prioritization request
 class RequirementInput(BaseModel):
@@ -39,7 +45,6 @@ class RequirementInput(BaseModel):
 # Route to handle the requirement prioritization
 @app.post("/prioritize")
 async def prioritize_requirement(input_data: RequirementInput):
-    # Build the prompt to send to the model based on the input
     prompt = f"""
     Requirement: {input_data.requirement}
     Stakeholder Importance: {input_data.importance}/10
@@ -50,14 +55,24 @@ async def prioritize_requirement(input_data: RequirementInput):
     """
 
     try:
-        # Call Hugging Face Inference API to generate the response using the InferenceClient
-        response = hf_client.text_generation(prompt, max_tokens=200)
-        generated_text = response["generated_text"]
+        # Load a sample image (replace with actual image processing as needed)
+        image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
+        image = Image.open(requests.get(image_url, stream=True).raw)
 
-        # Return the generated text as the response
+        # Prepare the input text and image
+        messages = [
+            {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}
+        ]
+        input_text = processor.apply_chat_template(messages, add_generation_prompt=True)
+        inputs = processor(image, input_text, return_tensors="pt").to(model.device)
+
+        # Generate output from the model
+        output = model.generate(**inputs, max_new_tokens=200)
+        generated_text = processor.decode(output[0], skip_special_tokens=True)
+
+        # Return the generated response
         return {"response": generated_text}
 
     except Exception as e:
-        # Handle API errors and provide useful feedback
-        print(f"Error calling Hugging Face API: {str(e)}")  # Log the error for debugging
+        print(f"Error calling LLaMA 3.2 Vision-Instruct: {str(e)}")  # Log the error for debugging
         return {"response": f"Error: {str(e)}"}
