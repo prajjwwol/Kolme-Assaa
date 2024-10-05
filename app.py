@@ -1,19 +1,29 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from huggingface_hub import InferenceClient
+from fastapi.responses import FileResponse
+from huggingface_hub import InferenceClient  # Use InferenceClient instead of InferenceApi
+from pydantic import BaseModel
 import os
 
-# api initialisation
+# Initialize FastAPI app
 app = FastAPI()
 
-# Serve static files from the 'static' directory
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Serve static files from the 'static' directory with an absolute path
+app.mount("/static", StaticFiles(directory=os.path.abspath("static")), name="static")
 
-# Set up Hugging Face Inference Client with LLaMA 3.2
+# Serve the index.html file at the root URL
+@app.get("/")
+def serve_index():
+    # Get the absolute path of index.html
+    file_path = os.path.join(os.path.abspath("static"), "index.html")
+    print(f"Serving index.html from: {file_path}")
+    return FileResponse(file_path)
+
+# Set up Hugging Face Inference Client (replacing deprecated InferenceApi)
 huggingface_api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-hf_client = InferenceClient(model="meta-llama/Llama-3.2B", token=huggingface_api_token)
+hf_client = InferenceClient(model="gpt2", token=huggingface_api_token)
 
-# model for the incoming requirement prioritization request
+# Define the data model for the incoming requirement prioritization request
 class RequirementInput(BaseModel):
     requirement: str
     importance: int
@@ -23,29 +33,25 @@ class RequirementInput(BaseModel):
 # Route to handle the requirement prioritization
 @app.post("/prioritize")
 async def prioritize_requirement(input_data: RequirementInput):
-    # Prompts
+    # Build the prompt to send to the model based on the input
     prompt = f"""
-    You are an expert in software requirement prioritization for a financial project.
-
     Requirement: {input_data.requirement}
+    Stakeholder Importance: {input_data.importance}/10
+    Implementation Complexity: {input_data.complexity}/10
+    Business Value: {input_data.business_value}/10
 
-    For each of the following, provide a clear, concise answer:
-
-    1. **Importance**: Explain why this requirement is rated {input_data.importance}/10 in terms of importance. What is the significance of this feature to the project and stakeholders?
-    2. **Complexity**: Explain why the complexity is rated {input_data.complexity}/10. What are the challenges in implementing this requirement?
-    3. **Business Value**: Explain why the business value is rated {input_data.business_value}/10. How will this requirement impact the project’s goals (e.g., security, compliance, user trust)?
-
-    Please keep your response directly focused on the factors listed above.
+    Please prioritize this requirement and explain the reasoning.
     """
 
     try:
-        # Calls Hugging Face Inference API to generate the response using LLaMA 3.2
+        # Call Hugging Face Inference API to generate the response using the InferenceClient
         response = hf_client.text_generation(prompt, max_tokens=200)
         generated_text = response["generated_text"]
 
+        # Return the generated text as the response
         return {"response": generated_text}
 
     except Exception as e:
-        # Handles API errors and provide useful feedback
-        print(f"Error calling Hugging Face API: {str(e)}")
+        # Handle API errors and provide useful feedback
+        print(f"Error calling Hugging Face API: {str(e)}")  # Log the error for debugging
         return {"response": f"Error: {str(e)}"}
